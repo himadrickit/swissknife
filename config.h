@@ -41,15 +41,18 @@ static const unsigned long inst_ok_codes[] = { 0, 3010, 1641 };
 /* The whole EXE is searched for these; the marker found nearest the start of the file decides
  * the type (the outer installer comes first, anything it carries comes later). */
 static const InstMarker inst_markers[] = {
-	/* type              marker                     wide (UTF-16) */
-	{ INST_BURN,         ".wixburn",                0 },
-	{ INST_NSIS,         "NullsoftInst",            0 },
-	{ INST_NSIS,         "Nullsoft Install System", 0 },
-	{ INST_INNO,         "Inno Setup Setup Data",   0 },
-	{ INST_INNO,         "InnoSetupLdrWindow",      0 },
-	{ INST_INSTALLSHIELD,"InstallShield",           0 },
-	{ INST_SQUIRREL,     "Squirrel",                1 },
-	{ INST_7ZIP,         "7-Zip Installer",         0 },
+	/* type              marker                      wide weak */
+	{ INST_BURN,         ".wixburn",                 0, 0 },
+	{ INST_NSIS,         "NullsoftInst",             0, 0 },
+	{ INST_NSIS,         "Nullsoft Install System",  0, 0 },
+	{ INST_INNO,         "Inno Setup Setup Data",    0, 0 },
+	{ INST_INNO,         "InnoSetupLdrWindow",       0, 0 },
+	{ INST_INSTALLSHIELD,"InstallShield",            0, 0 },
+	{ INST_SQUIRREL,     "Squirrel",                 1, 0 },
+	{ INST_7ZIP,         "7-Zip Installer",          0, 0 },
+	/* a 7z or RAR archive glued behind an EXE stub = self-extractor (weak: installers may carry one too) */
+	{ INST_SFX,          "7z\xBC\xAF\x27\x1C",        0, 1 },
+	{ INST_SFX,          "Rar!\x1A\x07",              0, 1 },
 };
 
 /* quiet switches per type. MSI goes through msiexec; its line is appended after /i "file" */
@@ -76,3 +79,9 @@ static const InstArgs inst_args[] = {
 #define EX_7Z_FLAGS "-y", "-bso0", "-bsp0"   /* yes to all, no banner, no progress */
 #endif
 static const char *const ex_7z_dirs[] = { "%ProgramFiles%\\7-Zip", "%ProgramFiles(x86)%\\7-Zip" };
+
+/* ---- folders, all relative to the user profile (~) ---- */
+#define DIR_KNIVES   "knives"           /* ~/knives/knives.json and ~/knives/<knife>/  */
+#define DIR_EXTRACT  "swiss"            /* archives unpack to ~/swiss/<package name>   */
+#define DIR_CACHE    ".cache\\swiss"    /* downloads land here, MSI logs in its logs\   */
+/* installers (NSIS, Inno, MSI, ...) choose their own folder, normally Program Files */

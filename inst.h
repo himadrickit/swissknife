@@ -7,10 +7,12 @@ typedef enum {
 	INST_MSI, INST_NSIS, INST_INNO, INST_BURN, INST_INSTALLSHIELD, INST_SQUIRREL, INST_7ZIP,
 	INST_EXE,                       /* a PE with no known installer marker */
 	INST_ZIP, INST_NUPKG, INST_APPX,
-	INST_7Z, INST_TAR, INST_GZIP, INST_BZIP2, INST_XZ  /* archives, from here on */
+	INST_7Z, INST_TAR, INST_GZIP, INST_BZIP2, INST_XZ,
+	INST_SFX                        /* 7-Zip / RAR self-extracting EXE: archives, from INST_7Z on */
 } InstType;
 
-typedef struct { InstType type; const char *marker; int wide; } InstMarker;  /* wide: match as UTF-16LE */
+/* wide: match as UTF-16LE. weak: only counts when no non-weak marker is found anywhere in the file */
+typedef struct { InstType type; const char *marker; int wide; int weak; } InstMarker;
 typedef struct { InstType type; const char *install; const char *uninstall; } InstArgs;
 
 /* path: the file. name_hint: its URL or name, only used for .nupkg/.appx/.msix and as a last resort */

@@ -21,15 +21,15 @@ HANDLE installed_mutex;
 static char KNIVES_FOLDER_PATH[MAX_PATH];
 static char KNIVES_CONFIG_PATH[MAX_PATH];
 static char INSTALLED_FILE_PATH[MAX_PATH];
+static char CACHE_DIR[MAX_PATH];  // ~/.cache/swiss: downloaded files and logs
 
 typedef struct Package {
     char name[128];
     char id[64];
     char version[128];
     char url[1024];
-    char silent[128];
+    int silent;       // 1 = run installers quietly (default), 0 = let them show their window
     char type[16];
-    char installer[64];
     char binpath[256];
     char out_path[MAX_PATH];
     char untype[32]; // uninstaller type
@@ -253,6 +253,17 @@ static void copy_str(const cJSON* root, const char* key, char* dst, size_t cap) 
     if (cJSON_IsString(it) && it->valuestring) snprintf(dst, cap, "%s", it->valuestring);
 }
 
+/* "silent": true/false (or "true"/"false"); missing or anything else means quiet */
+static int json_silent(const cJSON* it) {
+    if (cJSON_IsFalse(it)) return 0;
+    if (cJSON_IsNumber(it)) return it->valuedouble != 0;
+    if (cJSON_IsString(it) && it->valuestring) {
+        const char* v = it->valuestring;
+        if (_stricmp(v, "false") == 0 || _stricmp(v, "no") == 0 || strcmp(v, "0") == 0) return 0;
+    }
+    return 1;
+}
+
 int parse_package_json(const char* filepath, Package* pkg) {
     char* content = read_file(filepath);
     if (!content) return -1;
@@ -265,9 +276,8 @@ int parse_package_json(const char* filepath, Package* pkg) {
     copy_str(root, "id", pkg->id, sizeof(pkg->id));
     copy_str(root, "version", pkg->version, sizeof(pkg->version));
     copy_str(root, "url", pkg->url, sizeof(pkg->url));
-    copy_str(root, "silent", pkg->silent, sizeof(pkg->silent));
+    pkg->silent = json_silent(cJSON_GetObjectItem(root, "silent"));
     copy_str(root, "type", pkg->type, sizeof(pkg->type));
-    copy_str(root, "installer", pkg->installer, sizeof(pkg->installer));
     copy_str(root, "uninstaller", pkg->uninstaller, sizeof(pkg->uninstaller));
     copy_str(root, "untype", pkg->untype, sizeof(pkg->untype));
     copy_str(root, "binpath", pkg->binpath, sizeof(pkg->binpath));
@@ -278,10 +288,8 @@ int parse_package_json(const char* filepath, Package* pkg) {
         return -3;
     }
 
-    // build out_path
-    const char* tmp = getenv("TEMP");
-    if (!tmp) tmp = ".";
-    snprintf(pkg->out_path, MAX_PATH, "%s\\%s.%s", tmp, pkg->id, pkg->type[0] ? pkg->type : "tmp");
+    // downloads live in the cache folder
+    snprintf(pkg->out_path, MAX_PATH, "%s\\%s.%s", CACHE_DIR, pkg->id, pkg->type[0] ? pkg->type : "tmp");
     return 0;
 }
 
@@ -517,35 +525,32 @@ static int run_wait(const char* file, const char* args, int hidden, DWORD* code)
 /* %USERPROFILE%\swiss\logs\<id>-<tag>.log */
 static void log_path(const char* id, const char* tag, char* out, size_t cap) {
     char dir[MAX_PATH], safe[128];
-    const char* up = getenv("USERPROFILE");
     size_t n = 0;
-    if (!up) up = ".";
     for (; id[n] && n < sizeof(safe) - 1; ++n)
         safe[n] = (isalnum((unsigned char)id[n]) || id[n] == '-' || id[n] == '_') ? id[n] : '_';
     safe[n] = 0;
-    snprintf(dir, sizeof(dir), "%s\\swiss", up);
-    CreateDirectoryA(dir, NULL);
-    snprintf(dir, sizeof(dir), "%s\\swiss\\logs", up);
-    CreateDirectoryA(dir, NULL);
+    snprintf(dir, sizeof(dir), "%s\\logs", CACHE_DIR);
+    ex_mkdirs(dir);
     snprintf(out, cap, "%s\\%s-%s.log", dir, safe, tag);
 }
 
-/* install an MSI or an EXE installer of detected type t; 1 = success */
+/* install an MSI or an EXE installer of detected type t; 1 = success.
+ * Quiet switches come from the table in config.h only; -V or "silent": false skips them. */
 static int install_binary(Package* p, InstType t) {
     char args[2 * MAX_PATH + 256], log[MAX_PATH] = "";
-    // explicit "silent" from the package JSON beats the table; --nosilent drops both
-    const char* quiet = g_quiet ? (p->silent[0] ? p->silent : inst_quiet_args(t, 0)) : NULL;
+    const char* quiet = (g_quiet && p->silent) ? inst_quiet_args(t, 0) : NULL;
     DWORD code = 0;
     int started;
 
     if (t == INST_MSI) {
         log_path(p->id, "msi", log, sizeof(log));
         snprintf(args, sizeof(args), "/i \"%s\" %s /L*v \"%s\"", p->out_path, quiet ? quiet : "", log);
+        if (!g_quiet) printf("Running: msiexec.exe %s\n", args);
         started = run_wait("msiexec.exe", args, quiet != NULL, &code) == 0;
     } else {
-        if (g_quiet && !quiet)
-            printf("No quiet switch known for this installer; it will show its window.\n"
-                   "Set \"silent\" in the package JSON to give it one.\n");
+        if (g_quiet && p->silent && !quiet)
+            printf("Unknown installer type, so it can't run silently; its window will show.\n");
+        if (!g_quiet) printf("Running: %s %s\n", p->out_path, quiet ? quiet : "");
         started = run_wait(p->out_path, quiet, quiet != NULL, &code) == 0;
     }
 
@@ -572,12 +577,11 @@ void wait_and_install_packages(int count, Package packages[]) {
     for (int i = 0; i < count; ++i) {
         if (!packages[i].ok) continue; // not loaded or download failed
 
-        // Work out what the file really is; an explicit "installer" in the JSON wins
-        InstType t = inst_from_name(packages[i].installer);
-        if (t == INST_UNKNOWN) t = inst_detect(packages[i].out_path, packages[i].url);
+        // Work out what the file really is, from its content
+        InstType t = inst_detect(packages[i].out_path, packages[i].url);
 
         char extract_path[MAX_PATH];
-        snprintf(extract_path, MAX_PATH, "%s\\swiss\\%s", userProfile, packages[i].name);
+        snprintf(extract_path, MAX_PATH, "%s\\%s\\%s", userProfile, DIR_EXTRACT, packages[i].name);
 
         if (t == INST_ZIP || t == INST_NUPKG || t >= INST_7Z) {
             printf("Extracting %s (%s)...\n", packages[i].name, inst_name(t));
@@ -898,9 +902,9 @@ int main(int argc, char* argv[]) {
     }
     atexit(net_cleanup);
 
-    // --nosilent anywhere on the line: installers show their own UI
+    // -V anywhere on the line = verbose: installers run with their own window, no silent switches
     for (int a = 1; a < argc;) {
-        if (strcmp(argv[a], "--nosilent") == 0) {
+        if (strcmp(argv[a], "-V") == 0) {
             g_quiet = 0;
             memmove(&argv[a], &argv[a + 1], (size_t)(argc - a) * sizeof(*argv));
             argc--;
@@ -918,9 +922,17 @@ int main(int argc, char* argv[]) {
         else strcpy(userProfile, ".");
     }
 
-    snprintf(KNIVES_FOLDER_PATH, MAX_PATH, "%s\\knives", userProfile);
+    snprintf(KNIVES_FOLDER_PATH, MAX_PATH, "%s\\%s", userProfile, DIR_KNIVES);
     snprintf(KNIVES_CONFIG_PATH, MAX_PATH, "%s\\knives.json", KNIVES_FOLDER_PATH);
     snprintf(INSTALLED_FILE_PATH, MAX_PATH, "%s\\package.json", userProfile);
+
+    // downloads go to ~/.cache/swiss; if that can't be created, fall back to %TEMP%
+    snprintf(CACHE_DIR, MAX_PATH, "%s\\%s", userProfile, DIR_CACHE);
+    if (ex_mkdirs(CACHE_DIR) != 0) {
+        const char* tmp = getenv("TEMP");
+        printf("Could not create %s; downloading to %s instead.\n", CACHE_DIR, tmp ? tmp : ".");
+        snprintf(CACHE_DIR, MAX_PATH, "%s", tmp ? tmp : ".");
+    }
 
     ensure_knives_folder_and_config();
 
@@ -947,7 +959,7 @@ int main(int argc, char* argv[]) {
         printf("  sk -Si                 [Install from %s]\n", INSTALLED_FILE_PATH);
         printf("  sk -Sr <name> <url>    [Add/update knife]\n");
         printf("  sk -R <pkg>            [Uninstall a package]\n");
-        printf("  --nosilent             [Anywhere: let installers show their own UI]\n");
+        printf("  -V                     [Anywhere: verbose, installers show their own window]\n");
         return 0;
     }
 
@@ -981,7 +993,7 @@ int main(int argc, char* argv[]) {
         }
 
         InstType ut = inst_from_name(pkg.untype);
-        const char* flags = g_quiet ? inst_quiet_args(ut, 1) : NULL;
+        const char* flags = (g_quiet && pkg.silent) ? inst_quiet_args(ut, 1) : NULL;
         DWORD code = 0;
         int started;
 

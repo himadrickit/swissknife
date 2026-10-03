@@ -9,6 +9,8 @@
 size_t ex_cmdline(char *out, size_t cap, const char *const argv[]);
 /* run argv[0] with args, no shell, wait. exit code, or -1 if it could not start */
 int    ex_run(const char *const argv[]);
+/* mkdir -p: create path and any missing parents. 0 if it exists afterwards */
+int    ex_mkdirs(const char *path);
 /* unpack archive (zip, nupkg, tar, gz, bz2, xz, 7z) into dest, creating it. 0 on success */
 int    ex_extract(InstType t, const char *archive, const char *dest);
 

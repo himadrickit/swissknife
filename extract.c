@@ -101,7 +101,7 @@ static int is_dir(const char *p)
 #endif
 }
 
-static int mkdirs(const char *path)
+int ex_mkdirs(const char *path)
 {
 	char buf[4096];
 	size_t n = strlen(path);
@@ -167,19 +167,23 @@ int ex_extract(InstType t, const char *archive, const char *dest)
 	char exe7[4096], o7[4200];
 	int rc, use7z;
 
-	if (mkdirs(dest) != 0) {
+	if (ex_mkdirs(dest) != 0) {
 		fprintf(stderr, "extract: cannot create %s\n", dest);
 		return -1;
 	}
 	switch (t) {
 	case INST_ZIP: case INST_NUPKG: case INST_TAR:
-	case INST_GZIP: case INST_BZIP2: case INST_XZ: case INST_7Z:
+	case INST_GZIP: case INST_BZIP2: case INST_XZ: case INST_7Z: case INST_SFX:
 		break;
 	default:
 		return -1;
 	}
 
-	use7z = t == INST_7Z && find_7z(exe7, sizeof exe7);
+	use7z = (t == INST_7Z || t == INST_SFX) && find_7z(exe7, sizeof exe7);
+	if (t == INST_SFX && !use7z) {
+		fprintf(stderr, "extract: self-extracting archives need 7-Zip, which was not found\n");
+		return -1;
+	}
 	if (t == INST_7Z && !use7z)
 		fprintf(stderr, "extract: 7-Zip not found, trying %s\n", EX_TAR);
 

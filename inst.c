@@ -74,8 +74,10 @@ static InstType scan_pe(FILE *f)
 	}
 	free(buf);
 
-	for (size_t i = 0; i < NMARK; i++)
-		if (first[i] >= 0 && (best == NMARK || first[i] < first[best])) best = i;
+	/* the earliest strong marker wins; weak ones (generic archive signatures) only if there is none */
+	for (int pass = 0; pass < 2 && best == NMARK; pass++)
+		for (size_t i = 0; i < NMARK; i++)
+			if (first[i] >= 0 && inst_markers[i].weak == pass && (best == NMARK || first[i] < first[best])) best = i;
 	return best == NMARK ? INST_EXE : inst_markers[best].type;
 }
 
@@ -117,7 +119,7 @@ static const struct { const char *name; InstType type; } names[] = {
 	{ "msi", INST_MSI }, { "nsis", INST_NSIS }, { "inno", INST_INNO }, { "burn", INST_BURN },
 	{ "installshield", INST_INSTALLSHIELD }, { "squirrel", INST_SQUIRREL }, { "7zip", INST_7ZIP }, { "exe", INST_EXE },
 	{ "zip", INST_ZIP }, { "nupkg", INST_NUPKG }, { "appx", INST_APPX }, { "7z", INST_7Z },
-	{ "tar", INST_TAR }, { "gzip", INST_GZIP }, { "bzip2", INST_BZIP2 }, { "xz", INST_XZ },
+	{ "tar", INST_TAR }, { "gzip", INST_GZIP }, { "bzip2", INST_BZIP2 }, { "xz", INST_XZ }, { "sfx", INST_SFX },
 };
 
 InstType inst_from_name(const char *s)

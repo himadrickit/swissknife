@@ -183,4 +183,3 @@ echo
 
 printf '%s\n' "Contents:"
 find "$BUILD" -maxdepth 1 -type f -printf '    %f  %s bytes\n'
-
