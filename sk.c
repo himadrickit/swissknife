@@ -247,6 +247,38 @@ int sync_knife_git_to_folder(const char* knife_name) {
     return r;
 }
 
+/* -Sy with no name: sync every knife listed in knives.json; one failing knife doesn't stop the rest */
+static int sync_all_knives(void) {
+    char* content = read_file(KNIVES_CONFIG_PATH);
+    cJSON* root = content ? cJSON_Parse(content) : NULL;
+    free(content);
+    const cJSON* list = root ? cJSON_GetObjectItem(root, "knives") : NULL;
+    int total = 0, failed = 0;
+
+    if (cJSON_IsArray(list)) {
+        for (int i = 0, n = cJSON_GetArraySize(list); i < n; ++i) {
+            const cJSON* name = cJSON_GetObjectItem(cJSON_GetArrayItem(list, i), "name");
+            if (!cJSON_IsString(name) || !name->valuestring[0]) continue;
+            total++;
+            printf("Syncing knife '%s'...\n", name->valuestring);
+            if (sync_knife_git_to_folder(name->valuestring) == 0)
+                printf("Synced knife '%s'\n", name->valuestring);
+            else {
+                printf("Could not sync knife '%s'\n", name->valuestring);
+                failed++;
+            }
+        }
+    }
+    cJSON_Delete(root);
+
+    if (total == 0) {
+        printf("No knives configured. Add one with: sk -Sr <name> <url>\n");
+        return 1;
+    }
+    printf("%d of %d knives synced.\n", total - failed, total);
+    return failed ? 1 : 0;
+}
+
 /* ---- parse package json from a given path ---- */
 static void copy_str(const cJSON* root, const char* key, char* dst, size_t cap) {
     const cJSON* it = cJSON_GetObjectItem(root, key);
@@ -945,7 +977,7 @@ int main(int argc, char* argv[]) {
     if (argc >= 2 && strcmp(argv[1], "-Sy") == 0 && argc == 3) {  // Sync a knife
         int r = sync_knife_git_to_folder(argv[2]);
         if (r == 0) printf("Synced knife '%s'\n", argv[2]);
-        return 0;
+        return r == 0 ? 0 : 1;
     }
 
     if (argc < 2) {
@@ -955,7 +987,7 @@ int main(int argc, char* argv[]) {
         printf("  sk -Ql                 [List all packages in the knives folders]\n");
         printf("  sk -Ss <pkg>           [Search for package in knives]\n");
         printf("  sk -S <knife>/<pkg> [pkg2...] [Install packages]\n");
-        printf("  sk -Sy <knife>         [Refresh package list for knife]\n");
+        printf("  sk -Sy [knife]         [Sync one knife, or every knife if none is named]\n");
         printf("  sk -Si                 [Install from %s]\n", INSTALLED_FILE_PATH);
         printf("  sk -Sr <name> <url>    [Add/update knife]\n");
         printf("  sk -R <pkg>            [Uninstall a package]\n");
@@ -964,15 +996,7 @@ int main(int argc, char* argv[]) {
     }
 
     if (strcmp(argv[1], "-Sy") == 0 && argc == 2) {
-        // sync default 'main' if present
-        char* url = get_knife_url("main");
-        if (!url) {
-            printf("Default knife 'main' not configured. Add it with -Sr main <url>\n");
-        } else {
-            sync_knife_git_to_folder("main");
-            free(url);
-        }
-        return 0;
+        return sync_all_knives();
     }
 
     if (strcmp(argv[1], "-R") == 0 && argc >= 3) {
